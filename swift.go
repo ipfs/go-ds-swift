@@ -10,14 +10,14 @@ import (
 )
 
 type SwiftContainer struct {
-	conn  *swift.Connection
+	conn *swift.Connection
 
 	Config
 }
 
 type Config struct {
 	swift.Connection
-	Container  string
+	Container string
 }
 
 func NewSwiftDatastore(conf Config) (*SwiftContainer, error) {
@@ -70,6 +70,11 @@ func (s *SwiftContainer) Has(k ds.Key) (bool, error) {
 		return false, err
 	}
 }
+
+func (s *SwiftContainer) GetSize(k ds.Key) (int, error) {
+	return 0, nil
+}
+
 func (s *SwiftContainer) Query(q dsq.Query) (dsq.Results, error) {
 	opts := swift.ObjectsOpts{
 		Prefix: q.Prefix,
@@ -109,11 +114,15 @@ func (s *SwiftContainer) Query(q dsq.Query) (dsq.Results, error) {
 
 			b, err := s.conn.ObjectGetBytes(s.Container, obj.Key)
 			if err != nil {
-				return dsq.Result{Error:err}, false
+				return dsq.Result{Error: err}, false
 			}
 			return dsq.Result{Entry: dsq.Entry{Key: obj.Key, Value: b}}, true
 		},
 	}), nil
+}
+
+func (s *SwiftContainer) Sync(prefix ds.Key) error {
+	return nil
 }
 
 func (s *SwiftContainer) Close() error {
