@@ -138,6 +138,14 @@ func (s *SwiftContainer) Close() error {
 	return nil
 }
 
+func (s *SwiftContainer) DiskUsage() (uint64, error) {
+	c, _, err := s.conn.Container(s.Container)
+	if err != nil {
+		return 0, err
+	}
+	return uint64(c.Bytes), nil
+}
+
 func (s *SwiftContainer) Batch() (ds.Batch, error) {
 	return &swiftBatch{
 		s:         s,
