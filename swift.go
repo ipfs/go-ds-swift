@@ -1,7 +1,10 @@
 package swiftds
 
 import (
+	"archive/tar"
+	"bytes"
 	"fmt"
+	"strings"
 
 	ds "github.com/ipfs/go-datastore"
 	dsq "github.com/ipfs/go-datastore/query"
@@ -39,8 +42,14 @@ func NewSwiftDatastore(conf Config) (*SwiftContainer, error) {
 	}, nil
 }
 
+// Bulk APIs does not allow names starting with "/",
+// so we need to normalize them here.
+func keyToName(k ds.Key) string {
+	return strings.TrimPrefix(k.String(), "/")
+}
+
 func (s *SwiftContainer) Get(k ds.Key) ([]byte, error) {
-	data, err := s.conn.ObjectGetBytes(s.Container, k.String())
+	data, err := s.conn.ObjectGetBytes(s.Container, keyToName(k))
 	switch err {
 	case nil:
 		return data, nil
@@ -52,15 +61,15 @@ func (s *SwiftContainer) Get(k ds.Key) ([]byte, error) {
 }
 
 func (s *SwiftContainer) Delete(k ds.Key) error {
-	return s.conn.ObjectDelete(s.Container, k.String())
+	return s.conn.ObjectDelete(s.Container, keyToName(k))
 }
 
 func (s *SwiftContainer) Put(k ds.Key, val []byte) error {
-	return s.conn.ObjectPutBytes(s.Container, k.String(), val, "application/octet-stream")
+	return s.conn.ObjectPutBytes(s.Container, keyToName(k), val, "application/octet-stream")
 }
 
 func (s *SwiftContainer) Has(k ds.Key) (bool, error) {
-	_, _, err := s.conn.Object(s.Container, k.String())
+	_, _, err := s.conn.Object(s.Container, keyToName(k))
 	switch err {
 	case nil:
 		return true, nil
@@ -92,7 +101,7 @@ func (s *SwiftContainer) GetSize(k ds.Key) (int, error) {
 
 func (s *SwiftContainer) Query(q dsq.Query) (dsq.Results, error) {
 	opts := swift.ObjectsOpts{
-		Prefix: q.Prefix,
+		Prefix: strings.TrimPrefix(q.Prefix, "/"),
 		Limit:  q.Limit + q.Offset,
 	}
 
@@ -107,7 +116,7 @@ func (s *SwiftContainer) Query(q dsq.Query) (dsq.Results, error) {
 
 	res := make([]dsq.Entry, len(objs[q.Offset:]))
 	for i, obj := range objs[q.Offset:] {
-		res[i] = dsq.Entry{Key: obj.Name}
+		res[i] = dsq.Entry{Key: "/" + obj.Name}
 	}
 
 	return dsq.ResultsFromIterator(q, dsq.Iterator{
@@ -127,7 +136,7 @@ func (s *SwiftContainer) Query(q dsq.Query) (dsq.Results, error) {
 				return dsq.Result{Entry: obj}, true
 			}
 
-			b, err := s.conn.ObjectGetBytes(s.Container, obj.Key)
+			b, err := s.conn.ObjectGetBytes(s.Container, strings.TrimPrefix(obj.Key, "/"))
 			if err != nil {
 				return dsq.Result{Error: err}, false
 			}
@@ -145,23 +154,64 @@ func (s *SwiftContainer) Close() error {
 }
 
 func (s *SwiftContainer) Batch() (ds.Batch, error) {
-	return &swiftBatch{s}, nil
+	return &swiftBatch{
+		s:         s,
+		putData:   nil,
+		tarWriter: nil,
+		delKeys:   nil,
+	}, nil
 }
 
 type swiftBatch struct {
-	s *SwiftContainer
+	s         *SwiftContainer
+	tarWriter *tar.Writer
+	putData   *bytes.Buffer
+	delKeys   []string
 }
 
 func (b *swiftBatch) Put(k ds.Key, val []byte) error {
-	return b.s.Put(k, val)
+	if b.tarWriter == nil {
+		b.putData = new(bytes.Buffer)
+		b.tarWriter = tar.NewWriter(b.putData)
+	}
+	header := tar.Header{
+		Typeflag: tar.TypeReg,
+		Name:     k.String(),
+		Size:     int64(len(val)),
+	}
+
+	if err := b.tarWriter.WriteHeader(&header); err != nil {
+		return err
+	}
+	if _, err := b.tarWriter.Write(val); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (b *swiftBatch) Delete(k ds.Key) error {
-	return b.s.Delete(k)
+	b.delKeys = append(b.delKeys, keyToName(k))
+	return nil
 }
 
 func (b *swiftBatch) Commit() error {
-	// TODO: can optimize using bulkUpload/bulkDelete
+	if b.tarWriter != nil {
+		if err := b.tarWriter.Close(); err != nil {
+			return err
+		}
+
+		_, err := b.s.BulkUpload(b.s.Container, b.putData, swift.UploadTar, nil)
+		if err != nil {
+			return err
+		}
+	}
+
+	if len(b.delKeys) > 0 {
+		if _, err := b.s.BulkDelete(b.s.Container, b.delKeys); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
