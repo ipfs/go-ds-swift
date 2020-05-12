@@ -102,45 +102,51 @@ func (s *SwiftContainer) GetSize(k ds.Key) (int, error) {
 func (s *SwiftContainer) Query(q dsq.Query) (dsq.Results, error) {
 	opts := swift.ObjectsOpts{
 		Prefix: strings.TrimPrefix(q.Prefix, "/"),
-		Limit:  q.Limit + q.Offset,
 	}
 
-	objs, err := s.conn.Objects(s.Container, &opts)
-	if err != nil {
-		return nil, err
+	if q.Limit != 0 {
+		opts.Limit = q.Limit + q.Offset
 	}
 
 	if q.Orders != nil || q.Filters != nil {
 		return nil, fmt.Errorf("swiftds doesnt support filters or orders")
 	}
 
-	res := make([]dsq.Entry, len(objs[q.Offset:]))
-	for i, obj := range objs[q.Offset:] {
-		res[i] = dsq.Entry{Key: "/" + obj.Name}
+	names, err := s.conn.ObjectNamesAll(s.Container, &opts)
+	if err != nil {
+		return nil, err
+	}
+
+	names = names[q.Offset:]
+
+	if q.Limit != 0 {
+		names = names[0:q.Limit]
 	}
 
 	return dsq.ResultsFromIterator(q, dsq.Iterator{
 		Close: func() error {
-			objs = []swift.Object{}
+			names = []string{}
 			return nil
 		},
 		Next: func() (dsq.Result, bool) {
-			if len(res) == 0 {
+			if len(names) == 0 {
 				return dsq.Result{}, false
 			}
 
-			obj := res[0]
-			res = res[1:]
+			name := names[0]
+			names = names[1:]
+
+			key := "/" + name
 
 			if q.KeysOnly {
-				return dsq.Result{Entry: obj}, true
+				return dsq.Result{Entry: dsq.Entry{Key: key}}, true
 			}
 
-			b, err := s.conn.ObjectGetBytes(s.Container, strings.TrimPrefix(obj.Key, "/"))
+			b, err := s.conn.ObjectGetBytes(s.Container, name)
 			if err != nil {
 				return dsq.Result{Error: err}, false
 			}
-			return dsq.Result{Entry: dsq.Entry{Key: obj.Key, Value: b}}, true
+			return dsq.Result{Entry: dsq.Entry{Key: key, Value: b}}, true
 		},
 	}), nil
 }
