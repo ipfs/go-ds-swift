@@ -99,9 +99,9 @@ func (s *SwiftContainer) Query(q dsq.Query) (dsq.Results, error) {
 		return nil, fmt.Errorf("swiftds doesnt support filters or orders")
 	}
 
-	res := make([]dsq.Entry, len(objs[q.Offset:]))
+	res := make([]string, len(objs[q.Offset:]))
 	for i, obj := range objs[q.Offset:] {
-		res[i] = dsq.Entry{Key: "/" + obj.Name}
+		res[i] = obj.Name
 	}
 
 	return dsq.ResultsFromIterator(q, dsq.Iterator{
@@ -114,18 +114,20 @@ func (s *SwiftContainer) Query(q dsq.Query) (dsq.Results, error) {
 				return dsq.Result{}, false
 			}
 
-			obj := res[0]
+			name := res[0]
 			res = res[1:]
 
+			key := "/" + name
+
 			if q.KeysOnly {
-				return dsq.Result{Entry: obj}, true
+				return dsq.Result{Entry: dsq.Entry{Key: key}}, true
 			}
 
-			b, err := s.conn.ObjectGetBytes(s.Container, strings.TrimPrefix(obj.Key, "/"))
+			b, err := s.conn.ObjectGetBytes(s.Container, name)
 			if err != nil {
 				return dsq.Result{Error: err}, false
 			}
-			return dsq.Result{Entry: dsq.Entry{Key: obj.Key, Value: b}}, true
+			return dsq.Result{Entry: dsq.Entry{Key: key, Value: b}}, true
 		},
 	}), nil
 }
