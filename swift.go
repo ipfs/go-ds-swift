@@ -3,21 +3,21 @@ package swiftds
 import (
 	"fmt"
 
-	swift "github.com/ncw/swift"
-
 	ds "github.com/ipfs/go-datastore"
 	dsq "github.com/ipfs/go-datastore/query"
+
+	swift "github.com/ncw/swift"
 )
 
 type SwiftContainer struct {
-	conn  *swift.Connection
+	conn *swift.Connection
 
 	Config
 }
 
 type Config struct {
 	swift.Connection
-	Container  string
+	Container string
 }
 
 func NewSwiftDatastore(conf Config) (*SwiftContainer, error) {
@@ -70,10 +70,30 @@ func (s *SwiftContainer) Has(k ds.Key) (bool, error) {
 		return false, err
 	}
 }
+
+func (s *SwiftContainer) GetSize(k ds.Key) (int, error) {
+	info, _, err := s.conn.Object(s.Container, k.String())
+
+	if err != nil {
+		switch err {
+		case swift.ObjectNotFound:
+			return 0, ds.ErrNotFound
+		default:
+			return 0, err
+		}
+	}
+
+	maxInt := int64((^uint(0)) >> 1)
+	if info.Bytes > maxInt {
+		return 0, fmt.Errorf("integer overflow")
+	}
+	return int(info.Bytes), nil
+}
+
 func (s *SwiftContainer) Query(q dsq.Query) (dsq.Results, error) {
 	opts := swift.ObjectsOpts{
 		Prefix: q.Prefix,
-		Limit: q.Limit + q.Offset,
+		Limit:  q.Limit + q.Offset,
 	}
 
 	objs, err := s.conn.Objects(s.Container, &opts)
@@ -109,11 +129,15 @@ func (s *SwiftContainer) Query(q dsq.Query) (dsq.Results, error) {
 
 			b, err := s.conn.ObjectGetBytes(s.Container, obj.Key)
 			if err != nil {
-				return dsq.Result{Error:err}, false
+				return dsq.Result{Error: err}, false
 			}
 			return dsq.Result{Entry: dsq.Entry{Key: obj.Key, Value: b}}, true
 		},
 	}), nil
+}
+
+func (s *SwiftContainer) Sync(prefix ds.Key) error {
+	return nil
 }
 
 func (s *SwiftContainer) Close() error {

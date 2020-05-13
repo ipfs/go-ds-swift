@@ -89,6 +89,10 @@ func addTestCases(t *testing.T, d *SwiftContainer, testcases map[string]string) 
 		if string(v2) != v {
 			t.Errorf("%s values differ: %s != %s", k, v, v2)
 		}
+		size, err := d.GetSize(dsk)
+		if size != len(v) {
+			t.Errorf("%s size differ: %d != %d", k, len(v), size)
+		}
 	}
 }
 func TestQuery(t *testing.T) {
