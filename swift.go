@@ -72,10 +72,15 @@ func (s *SwiftContainer) Has(k ds.Key) (bool, error) {
 }
 
 func (s *SwiftContainer) GetSize(k ds.Key) (int, error) {
-	info, _, err := s.conn.Object(s.Container, keyToName(k))
+	info, _, err := s.conn.Object(s.Container, k.String())
 
 	if err != nil {
-		return 0, err
+		switch err {
+		case swift.ObjectNotFound:
+			return 0, ds.ErrNotFound
+		default:
+			return 0, err
+		}
 	}
 
 	maxInt := int64((^uint(0)) >> 1)
@@ -88,7 +93,7 @@ func (s *SwiftContainer) GetSize(k ds.Key) (int, error) {
 func (s *SwiftContainer) Query(q dsq.Query) (dsq.Results, error) {
 	opts := swift.ObjectsOpts{
 		Prefix: q.Prefix,
-		Limit: q.Limit + q.Offset,
+		Limit:  q.Limit + q.Offset,
 	}
 
 	objs, err := s.conn.Objects(s.Container, &opts)
