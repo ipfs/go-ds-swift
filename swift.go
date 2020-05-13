@@ -3,10 +3,10 @@ package swiftds
 import (
 	"fmt"
 
-	swift "github.com/ncw/swift"
-
 	ds "github.com/ipfs/go-datastore"
 	dsq "github.com/ipfs/go-datastore/query"
+
+	swift "github.com/ncw/swift"
 )
 
 type SwiftContainer struct {
@@ -72,7 +72,17 @@ func (s *SwiftContainer) Has(k ds.Key) (bool, error) {
 }
 
 func (s *SwiftContainer) GetSize(k ds.Key) (int, error) {
-	return 0, nil
+	info, _, err := s.conn.Object(s.Container, keyToName(k))
+
+	if err != nil {
+		return 0, err
+	}
+
+	maxInt := int64((^uint(0)) >> 1)
+	if info.Bytes > maxInt {
+		return 0, fmt.Errorf("integer overflow")
+	}
+	return int(info.Bytes), nil
 }
 
 func (s *SwiftContainer) Query(q dsq.Query) (dsq.Results, error) {
