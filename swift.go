@@ -81,7 +81,7 @@ func (s *SwiftContainer) Has(k ds.Key) (bool, error) {
 }
 
 func (s *SwiftContainer) GetSize(k ds.Key) (int, error) {
-	info, _, err := s.conn.Object(s.Container, k.String())
+	info, _, err := s.conn.Object(s.Container, keyToName(k))
 
 	if err != nil {
 		switch err {
