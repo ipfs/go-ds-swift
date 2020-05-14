@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"fmt"
 	"strings"
+	"sync"
 
 	ds "github.com/ipfs/go-datastore"
 	dsq "github.com/ipfs/go-datastore/query"
@@ -13,9 +14,23 @@ import (
 )
 
 type SwiftContainer struct {
-	conn *swift.Connection
+	conn  *swift.Connection
+	cache *QueryCache
 
 	Config
+}
+
+type QueryCache struct {
+	lock   sync.RWMutex
+	prefix string
+	index  int
+	name   string
+}
+
+func (c *QueryCache) Invalidate() {
+	c.lock.Lock()
+	c.name = ""
+	c.lock.Unlock()
 }
 
 type Config struct {
@@ -36,8 +51,8 @@ func NewSwiftDatastore(conf Config) (*SwiftContainer, error) {
 	}
 
 	return &SwiftContainer{
-		conn: c,
-
+		conn:   c,
+		cache:  &QueryCache{},
 		Config: conf,
 	}, nil
 }
@@ -61,10 +76,12 @@ func (s *SwiftContainer) Get(k ds.Key) ([]byte, error) {
 }
 
 func (s *SwiftContainer) Delete(k ds.Key) error {
+	s.cache.Invalidate()
 	return s.conn.ObjectDelete(s.Container, keyToName(k))
 }
 
 func (s *SwiftContainer) Put(k ds.Key, val []byte) error {
+	s.cache.Invalidate()
 	return s.conn.ObjectPutBytes(s.Container, keyToName(k), val, "application/octet-stream")
 }
 
@@ -107,8 +124,17 @@ func (s *SwiftContainer) Query(q dsq.Query) (dsq.Results, error) {
 	opts := swift.ObjectsOpts{
 		Prefix: strings.TrimPrefix(q.Prefix, "/"),
 		// Number of entries to fetch at once
-		Limit: 1000,
+		Limit: 10000,
 	}
+
+	offset := q.Offset
+
+	s.cache.lock.RLock()
+	if s.cache.prefix == opts.Prefix && s.cache.name != "" && s.cache.index <= offset {
+		opts.Marker = s.cache.name
+		offset = s.cache.index - offset
+	}
+	s.cache.lock.RUnlock()
 
 	end := offset + q.Limit
 	if q.Limit != 0 && end < opts.Limit {
@@ -168,6 +194,19 @@ func (s *SwiftContainer) Query(q dsq.Query) (dsq.Results, error) {
 
 			name := names[0]
 			names = names[1:]
+
+			if len(names) == 0 && q.Limit > count && (q.Limit-count) < opts.Limit {
+				opts.Limit = q.Limit - count
+			}
+
+			// Cache the last item
+			if doneFetching || (q.Limit > 0 && count == q.Limit) {
+				s.cache.lock.Lock()
+				s.cache.prefix = opts.Prefix
+				s.cache.index = q.Offset + count
+				s.cache.name = name
+				s.cache.lock.Unlock()
+			}
 
 			key := "/" + name
 
@@ -242,6 +281,8 @@ func (b *swiftBatch) Delete(k ds.Key) error {
 }
 
 func (b *swiftBatch) Commit() error {
+	b.s.cache.Invalidate()
+
 	if b.tarWriter != nil {
 		if err := b.tarWriter.Close(); err != nil {
 			return err

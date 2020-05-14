@@ -125,6 +125,54 @@ func TestQuery(t *testing.T) {
 		"/a/b/d",
 		"/a/c",
 	}, rs)
+
+	expectCache(t, d, "/a/", "/a/c", 4)
+
+	rs, err = d.Query(dsq.Query{Prefix: "/a/", Offset: 4, Limit: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	expectMatches(t, []string{
+		"/a/d",
+	}, rs)
+
+	expectCache(t, d, "/a/", "/a/d", 5)
+
+	rs, err = d.Query(dsq.Query{Prefix: "/a/", Offset: 5, Limit: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	expectMatches(t, []string{}, rs)
+
+	rs, err = d.Query(dsq.Query{Prefix: "/a/", Offset: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	expectMatches(t, []string{
+		"/a/b/c",
+		"/a/b/d",
+		"/a/c",
+		"/a/d",
+	}, rs)
+}
+
+func expectCache(t *testing.T, d *SwiftContainer, prefix string, name string, index int) {
+	cprefix := "/" + d.cache.prefix
+	if cprefix != prefix {
+		t.Errorf("wrong cache prefix: %s != %s", cprefix, prefix)
+	}
+
+	cname := "/" + d.cache.name
+	if cname != name {
+		t.Errorf("wrong cache name: %s != %s", cname, name)
+	}
+
+	if d.cache.index != index {
+		t.Errorf("wrong cache index: %d != %d", d.cache.index, index)
+	}
 }
 
 func TestHas(t *testing.T) {
