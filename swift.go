@@ -100,28 +100,26 @@ func (s *SwiftContainer) GetSize(k ds.Key) (int, error) {
 }
 
 func (s *SwiftContainer) Query(q dsq.Query) (dsq.Results, error) {
-	opts := swift.ObjectsOpts{
-		Prefix: strings.TrimPrefix(q.Prefix, "/"),
-	}
-
-	if q.Limit != 0 {
-		opts.Limit = q.Limit + q.Offset
-	}
-
 	if q.Orders != nil || q.Filters != nil {
 		return nil, fmt.Errorf("swiftds doesnt support filters or orders")
 	}
 
-	names, err := s.conn.ObjectNamesAll(s.Container, &opts)
-	if err != nil {
-		return nil, err
+	opts := swift.ObjectsOpts{
+		Prefix: strings.TrimPrefix(q.Prefix, "/"),
+		// Number of entries to fetch at once
+		Limit: 1000,
 	}
 
-	names = names[q.Offset:]
-
-	if q.Limit != 0 {
-		names = names[0:q.Limit]
+	end := offset + q.Limit
+	if q.Limit != 0 && end < opts.Limit {
+		opts.Limit = end
 	}
+
+	// Number of items iterator returned
+	count := 0
+	// Object names
+	names := []string{}
+	doneFetching := false
 
 	return dsq.ResultsFromIterator(q, dsq.Iterator{
 		Close: func() error {
@@ -129,9 +127,44 @@ func (s *SwiftContainer) Query(q dsq.Query) (dsq.Results, error) {
 			return nil
 		},
 		Next: func() (dsq.Result, bool) {
-			if len(names) == 0 {
+			if q.Limit != 0 && count == q.Limit {
 				return dsq.Result{}, false
 			}
+
+			for len(names) == 0 || offset > 0 {
+				if doneFetching {
+					return dsq.Result{}, false
+				}
+
+				newNames, err := s.conn.ObjectNames(s.Container, &opts)
+				if err != nil {
+					return dsq.Result{Error: err}, false
+				}
+
+				newLen := len(newNames)
+				if newLen < opts.Limit {
+					doneFetching = true
+				}
+				if newLen == 0 && len(names) == 0 {
+					return dsq.Result{}, false
+				}
+
+				opts.Marker = newNames[newLen-1]
+
+				if offset > 0 {
+					if offset < newLen {
+						newNames = newNames[offset:]
+						offset = 0
+					} else {
+						newNames = []string{}
+						offset -= newLen
+					}
+				}
+
+				names = append(names, newNames...)
+			}
+
+			count++
 
 			name := names[0]
 			names = names[1:]
