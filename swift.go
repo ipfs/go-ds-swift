@@ -3,6 +3,7 @@ package swiftds
 import (
 	"archive/tar"
 	"bytes"
+	"context"
 	"fmt"
 	"strings"
 	"sync"
@@ -63,7 +64,7 @@ func keyToName(k ds.Key) string {
 	return strings.TrimPrefix(k.String(), "/")
 }
 
-func (s *SwiftContainer) Get(k ds.Key) ([]byte, error) {
+func (s *SwiftContainer) Get(ctx context.Context, k ds.Key) ([]byte, error) {
 	data, err := s.conn.ObjectGetBytes(s.Container, keyToName(k))
 	switch err {
 	case nil:
@@ -75,17 +76,17 @@ func (s *SwiftContainer) Get(k ds.Key) ([]byte, error) {
 	}
 }
 
-func (s *SwiftContainer) Delete(k ds.Key) error {
+func (s *SwiftContainer) Delete(ctx context.Context, k ds.Key) error {
 	s.cache.Invalidate()
 	return s.conn.ObjectDelete(s.Container, keyToName(k))
 }
 
-func (s *SwiftContainer) Put(k ds.Key, val []byte) error {
+func (s *SwiftContainer) Put(ctx context.Context, k ds.Key, val []byte) error {
 	s.cache.Invalidate()
 	return s.conn.ObjectPutBytes(s.Container, keyToName(k), val, "application/octet-stream")
 }
 
-func (s *SwiftContainer) Has(k ds.Key) (bool, error) {
+func (s *SwiftContainer) Has(ctx context.Context, k ds.Key) (bool, error) {
 	_, _, err := s.conn.Object(s.Container, keyToName(k))
 	switch err {
 	case nil:
@@ -97,7 +98,7 @@ func (s *SwiftContainer) Has(k ds.Key) (bool, error) {
 	}
 }
 
-func (s *SwiftContainer) GetSize(k ds.Key) (int, error) {
+func (s *SwiftContainer) GetSize(ctx context.Context, k ds.Key) (int, error) {
 	info, _, err := s.conn.Object(s.Container, keyToName(k))
 
 	if err != nil {
@@ -116,7 +117,7 @@ func (s *SwiftContainer) GetSize(k ds.Key) (int, error) {
 	return int(info.Bytes), nil
 }
 
-func (s *SwiftContainer) Query(q dsq.Query) (dsq.Results, error) {
+func (s *SwiftContainer) Query(ctx context.Context, q dsq.Query) (dsq.Results, error) {
 	if q.Orders != nil || q.Filters != nil {
 		return nil, fmt.Errorf("swiftds doesnt support filters or orders")
 	}
@@ -223,7 +224,7 @@ func (s *SwiftContainer) Query(q dsq.Query) (dsq.Results, error) {
 	}), nil
 }
 
-func (s *SwiftContainer) Sync(prefix ds.Key) error {
+func (s *SwiftContainer) Sync(ctx context.Context, prefix ds.Key) error {
 	return nil
 }
 
@@ -239,7 +240,7 @@ func (s *SwiftContainer) DiskUsage() (uint64, error) {
 	return uint64(c.Bytes), nil
 }
 
-func (s *SwiftContainer) Batch() (ds.Batch, error) {
+func (s *SwiftContainer) Batch(ctx context.Context) (ds.Batch, error) {
 	return &swiftBatch{
 		s:         s,
 		putData:   nil,
@@ -255,7 +256,7 @@ type swiftBatch struct {
 	delKeys   []string
 }
 
-func (b *swiftBatch) Put(k ds.Key, val []byte) error {
+func (b *swiftBatch) Put(ctx context.Context, k ds.Key, val []byte) error {
 	if b.tarWriter == nil {
 		b.putData = new(bytes.Buffer)
 		b.tarWriter = tar.NewWriter(b.putData)
@@ -275,12 +276,12 @@ func (b *swiftBatch) Put(k ds.Key, val []byte) error {
 	return nil
 }
 
-func (b *swiftBatch) Delete(k ds.Key) error {
+func (b *swiftBatch) Delete(ctx context.Context, k ds.Key) error {
 	b.delKeys = append(b.delKeys, keyToName(k))
 	return nil
 }
 
-func (b *swiftBatch) Commit() error {
+func (b *swiftBatch) Commit(ctx context.Context) error {
 	b.s.cache.Invalidate()
 
 	if b.tarWriter != nil {
